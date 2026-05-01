@@ -91,6 +91,7 @@ class Deployment(Base):
     restart_policy = Column(String, default="on-failure")
     restart_count = Column(Integer, default=0)
     last_error = Column(String, nullable=True)
+    container_port = Column(Integer, default=80)
 
     user = relationship("User")
     listing = relationship("Listing")

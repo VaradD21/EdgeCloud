@@ -70,8 +70,8 @@ export default function Dashboard() {
                 <CreditCard className="w-6 h-6 text-edge-blue" />
               </div>
               <div>
-                <p className="text-sm font-medium text-slate-400">Credit Balance</p>
-                <h3 className="text-3xl font-bold text-white">{wsData?.credit_balance?.toFixed(2) || '0.00'} <span className="text-sm text-edge-blue font-semibold uppercase tracking-wider">Credits</span></h3>
+                <p className="text-sm font-medium text-slate-400">Account Balance</p>
+                <h3 className="text-3xl font-bold text-white">$ {wsData?.credit_balance?.toFixed(2) || '0.00'} <span className="text-sm text-edge-blue font-semibold uppercase tracking-wider">USD</span></h3>
               </div>
             </div>
           </div>

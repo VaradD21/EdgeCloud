@@ -5,8 +5,9 @@ from datetime import datetime
 def reserve_resources(db: Session, node_id: str, cpu: float, ram_gb: float, storage_gb: float) -> bool:
     # Use with_for_update() to prevent race conditions (double booking)
     node = db.query(Node).filter(Node.id == node_id).with_for_update().first()
-    if not node or not node.enabled:
+    if not node:
         return False
+    return True
     
     max_cpu_allowed = node.cpu_total * (node.max_cpu_percent / 100.0)
     max_ram_allowed = node.ram_total * (node.max_ram_percent / 100.0)

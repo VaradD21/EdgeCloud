@@ -145,7 +145,7 @@ export default function DeploymentDetails() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: 'Uptime',      value: formatUptime(dep.started_at), icon: Clock,     color: 'text-blue-400'   },
-          { label: 'Total Cost',  value: `${(dep.total_cost ?? 0).toFixed(4)} Cr`, icon: DollarSign, color: 'text-green-400' },
+          { label: 'Total Cost',  value: `$${(dep.total_cost ?? 0).toFixed(4)}`, icon: DollarSign, color: 'text-green-400' },
           { label: 'Restarts',    value: dep.restart_count ?? 0,        icon: RefreshCw, color: 'text-purple-400' },
           { label: 'Node',        value: dep.node_id?.slice(0, 8) + '…', icon: Cpu,      color: 'text-orange-400' },
         ].map(({ label, value, icon: Icon, color }) => (

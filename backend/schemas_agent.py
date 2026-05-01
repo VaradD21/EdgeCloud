@@ -8,6 +8,7 @@ class AgentDeploymentOut(BaseModel):
     docker_image: str
     cpu_limit: float
     ram_limit: float
+    container_port: int = 80
     env_vars: Optional[str] = None  # Raw JSON string; agent parses it
     status: str
     restart_policy: str

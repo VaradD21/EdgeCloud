@@ -122,6 +122,7 @@ class DeploymentCreate(BaseModel):
     listing_id: UUID
     name: str
     docker_image: str
+    container_port: int = 80
 
 class DeploymentOut(BaseModel):
     id: UUID
@@ -132,6 +133,9 @@ class DeploymentOut(BaseModel):
     docker_image: str
     status: str
     subdomain: str
+    container_port: int
+    cpu_usage: Optional[int] = None
+    ram_usage: Optional[int] = None
 
     class Config:
         from_attributes = True

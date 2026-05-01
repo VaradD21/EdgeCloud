@@ -187,8 +187,8 @@ export default function Deploy() {
                   <div className="flex justify-between items-end">
                     <span className="text-slate-400 font-medium">Hourly Rate</span>
                     <div className="text-right">
-                      <span className="text-2xl font-bold text-edge-glow">{listing.price_per_hour.toFixed(3)}</span>
-                      <span className="text-xs text-slate-500 uppercase ml-1">Cr</span>
+                      <span className="text-3xl font-bold text-white">${listing.price_per_hour.toFixed(3)}</span>
+                      <span className="text-xs text-slate-500 uppercase ml-1">/ hr</span>
                     </div>
                   </div>
                 </div>

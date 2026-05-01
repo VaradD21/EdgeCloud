@@ -18,14 +18,20 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         role: str = payload.get("role")
-        if user_id is None or role == "node":
+        print(f"DEBUG: token payload: sub={user_id}, role={role}")
+        if user_id is None:
+            print("DEBUG: user_id is None")
             raise credentials_exception
-    except JWTError:
+    except JWTError as e:
+        print(f"DEBUG: JWT Error: {e}")
         raise credentials_exception
         
+    print(f"DEBUG: querying for user.id == {user_id}")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
+        print(f"DEBUG: User NOT found in DB for ID: {user_id}")
         raise credentials_exception
+    print(f"DEBUG: Found user {user.email}")
     return user
 
 def get_current_user_from_token(token: str, db: Session):

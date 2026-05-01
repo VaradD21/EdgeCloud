@@ -16,12 +16,12 @@ import models
 from schemas_agent import AgentDeploymentOut, AgentRejectionReport, AgentLogPush, AgentMetricsPush, AgentStartedReport
 import log_store
 import container_metrics
+from auth import SECRET_KEY, ALGORITHM
 
 router = APIRouter()
 log = logging.getLogger("edgecloud")
 
-SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-key-change-in-prod")
-ALGORITHM = "HS256"
+
 
 
 def get_node_from_secret(
@@ -76,6 +76,7 @@ def get_agent_deployments(
             docker_image=dep.docker_image,
             cpu_limit=listing.cpu_offered,
             ram_limit=listing.ram_offered_gb,
+            container_port=dep.container_port,
             env_vars=dep.env_vars,
             status=dep.status,
             restart_policy=dep.restart_policy or "on-failure",

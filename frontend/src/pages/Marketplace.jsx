@@ -53,7 +53,7 @@ export default function Marketplace() {
 
   useEffect(() => {
     api.get('/listings')
-      .then(r => setListings(r.data.filter(l => l.status === 'available')))
+      .then(r => setListings(r.data))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -144,8 +144,8 @@ export default function Marketplace() {
                 { label: 'Max CPU', key: 'maxCpu', max: 64  },
                 { label: 'Min RAM (GB)', key: 'minRam', max: 512 },
                 { label: 'Max RAM (GB)', key: 'maxRam', max: 512 },
-                { label: 'Min Price (Cr/hr)', key: 'minPrice', max: 10, step: 0.01 },
-                { label: 'Max Price (Cr/hr)', key: 'maxPrice', max: 10, step: 0.01 },
+                { label: 'Min Price ($/hr)', key: 'minPrice', max: 10, step: 0.01 },
+                { label: 'Max Price ($/hr)', key: 'maxPrice', max: 10, step: 0.01 },
               ].map(({ label, key, max, step = 1 }) => (
                 <div key={key}>
                   <div className="flex justify-between text-xs mb-1.5">
@@ -206,7 +206,7 @@ export default function Marketplace() {
                     </div>
                     <div className="text-right">
                       <span className="text-2xl font-bold text-white">{listing.price_per_hour.toFixed(3)}</span>
-                      <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Cr / Hr</span>
+                      <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">$ / Hr</span>
                     </div>
                   </div>
 

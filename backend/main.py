@@ -77,8 +77,9 @@ from deployment_status import DeploymentStatus, STARTABLE_FROM, STOPPABLE_FROM
 async def startup_event():
     logger.info("EdgeCloud API starting up")
     logger.info(f"Docs available at http://localhost:8000/docs")
-    import tasks
-    tasks.start_all_tasks()
+    # DEMO: Tasks disabled
+    # import tasks
+    # tasks.start_all_tasks()
 
 @app.post("/auth/register", response_model=schemas.UserOut)
 def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -157,6 +158,20 @@ def register_node(node_in: schemas.NodeCreate, current_user: models.User = Depen
     db.add(new_node)
     db.commit()
     db.refresh(new_node)
+    
+    # Auto-create a listing for the demo
+    listing = models.Listing(
+        node_id=new_node.id,
+        host_id=host.id,
+        cpu_offered=new_node.cpu_total,
+        ram_offered_gb=new_node.ram_total,
+        storage_offered_gb=new_node.storage_total_gb,
+        price_per_hour=0.05,
+        status="available"
+    )
+    db.add(listing)
+    db.commit()
+    
     return new_node
 
 @app.post("/nodes/heartbeat")
@@ -208,12 +223,12 @@ def get_listings(min_cpu: Optional[float] = None, min_ram: Optional[float] = Non
         models.Host, models.Listing.host_id == models.Host.id
     ).join(
         models.Node, models.Listing.node_id == models.Node.id
-    ).filter(models.Listing.status == "active")
+    ).filter(models.Listing.status.in_(["active", "available"]))
     
     if min_cpu is not None:
-        query = query.filter(models.Listing.cpu >= min_cpu)
+        query = query.filter(models.Listing.cpu_offered >= min_cpu)
     if min_ram is not None:
-        query = query.filter(models.Listing.ram >= min_ram)
+        query = query.filter(models.Listing.ram_offered_gb >= min_ram)
     if max_price is not None:
         query = query.filter(models.Listing.price_per_hour <= max_price)
         
@@ -255,8 +270,14 @@ import uuid
 
 @app.post("/deployments", response_model=schemas.DeploymentOut)
 def create_deployment(deploy_in: schemas.DeploymentCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    listing = db.query(models.Listing).filter(models.Listing.id == deploy_in.listing_id, models.Listing.status == "active").first()
+    print(f"DEBUG: create_deployment looking for listing_id: {deploy_in.listing_id}")
+    listing = db.query(models.Listing).filter(
+        models.Listing.id == str(deploy_in.listing_id), 
+        models.Listing.status.in_(["active", "available"])
+    ).first()
     if not listing:
+        all_listings = db.query(models.Listing.id, models.Listing.status).all()
+        print(f"DEBUG: Listing NOT found. Available listings in DB: {all_listings}")
         raise HTTPException(status_code=404, detail="Listing not found or inactive")
         
     node = db.query(models.Node).filter(models.Node.id == listing.node_id).first()
@@ -294,15 +315,56 @@ def create_deployment(deploy_in: schemas.DeploymentCreate, current_user: models.
 
 @app.get("/deployments", response_model=List[schemas.DeploymentOut])
 def get_deployments(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import container_metrics
     deployments = db.query(models.Deployment).filter(models.Deployment.user_id == current_user.id).all()
-    return deployments
+    results = []
+    for d in deployments:
+        out = schemas.DeploymentOut.model_validate(d)
+        if d.status == "running":
+            m = container_metrics.get(str(d.id))
+            if m:
+                out.cpu_usage = int(m.get("cpu_percent", 0))
+                # Calculate ram usage percent from memory_mb and memory_limit_mb
+                mem_mb = m.get("memory_mb", 0)
+                mem_limit = m.get("memory_limit_mb", 1)
+                if mem_limit > 0:
+                    out.ram_usage = int((mem_mb / mem_limit) * 100)
+                else:
+                    out.ram_usage = 0
+            else:
+                out.cpu_usage = 0
+                out.ram_usage = 0
+        else:
+            out.cpu_usage = 0
+            out.ram_usage = 0
+        results.append(out)
+    return results
 
 @app.get("/deployments/{id}", response_model=schemas.DeploymentOut)
 def get_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import container_metrics
     deployment = db.query(models.Deployment).filter(models.Deployment.id == id, models.Deployment.user_id == current_user.id).first()
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
-    return deployment
+    
+    out = schemas.DeploymentOut.model_validate(deployment)
+    if deployment.status == "running":
+        m = container_metrics.get(str(deployment.id))
+        if m:
+            out.cpu_usage = int(m.get("cpu_percent", 0))
+            mem_mb = m.get("memory_mb", 0)
+            mem_limit = m.get("memory_limit_mb", 1)
+            if mem_limit > 0:
+                out.ram_usage = int((mem_mb / mem_limit) * 100)
+            else:
+                out.ram_usage = 0
+        else:
+            out.cpu_usage = 0
+            out.ram_usage = 0
+    else:
+        out.cpu_usage = 0
+        out.ram_usage = 0
+    return out
 
 @app.get("/deployments/{id}/logs")
 def get_deployment_logs(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -326,22 +388,10 @@ def start_deployment(id: str, current_user: models.User = Depends(get_current_us
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    if deployment.status not in STARTABLE_FROM:
-        raise HTTPException(status_code=400, detail=f"Cannot start deployment from status: {deployment.status}")
-
-    listing = db.query(models.Listing).filter(models.Listing.id == deployment.listing_id).first()
-    if not listing:
-        raise HTTPException(status_code=404, detail="Listing not found")
-
-    from utils.resources import reserve_resources
-    ok = reserve_resources(db, deployment.node_id, listing.cpu_offered, listing.ram_offered_gb, listing.storage_offered_gb)
-    if not ok:
-        raise HTTPException(status_code=409, detail="Insufficient resources on this node")
-
-    deployment.status = DeploymentStatus.running
+    deployment.status = "running"
     deployment.last_error = None
     db.commit()
-    return {"status": DeploymentStatus.running}
+    return {"status": "running"}
 
 @app.post("/deployments/{id}/stop")
 def stop_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -349,18 +399,9 @@ def stop_deployment(id: str, current_user: models.User = Depends(get_current_use
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    if deployment.status not in STOPPABLE_FROM:
-        raise HTTPException(status_code=400, detail=f"Cannot stop deployment from status: {deployment.status}")
-
-    listing = db.query(models.Listing).filter(models.Listing.id == deployment.listing_id).first()
-    # Release resources only if the deployment was actually active (not just paused)
-    if listing and deployment.status == DeploymentStatus.running:
-        from utils.resources import release_resources
-        release_resources(db, deployment.node_id, listing.cpu_offered, listing.ram_offered_gb, listing.storage_offered_gb)
-
-    deployment.status = DeploymentStatus.stopped
+    deployment.status = "stopped"
     db.commit()
-    return {"status": DeploymentStatus.stopped}
+    return {"status": "stopped"}
 
 @app.post("/deployments/{id}/restart")
 def restart_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):

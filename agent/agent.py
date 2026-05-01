@@ -1,79 +1,47 @@
 #!/usr/bin/env python3
-"""
-EdgeCloud Node Agent.
-
-Responsibilities:
-1. Register this machine as a compute node (--register)
-2. Send periodic heartbeats with CPU/RAM/Disk metrics
-3. Poll /agent/deployments and reconcile Docker state via docker_runner
-"""
-import logging
-import requests
 import time
+import requests
+import docker
 import json
 import os
-import sys
-import argparse
-from datetime import datetime
 from pathlib import Path
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("edgecloud")
-
-try:
-    import psutil
-    psutil.cpu_percent(interval=None) # Initialize baseline
-except ImportError:
-    print("ERROR: Run 'pip install psutil' first.")
-    sys.exit(1)
-
-import docker_runner  # local module
 
 CONFIG_FILE = Path(".edgecloud_node")
 BACKEND_URL = os.getenv("EDGECLOUD_URL", "http://localhost:8000")
-HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "30"))   # seconds
-POLL_INTERVAL      = int(os.getenv("POLL_INTERVAL",      "30"))   # seconds
-LOG_INTERVAL       = int(os.getenv("LOG_INTERVAL",       "60"))   # seconds
-METRICS_INTERVAL   = int(os.getenv("METRICS_INTERVAL",   "15"))   # seconds
 
-
-# ---------------------------------------------------------------------------
-# Config helpers
-# ---------------------------------------------------------------------------
-
-def load_config() -> dict | None:
+def load_config():
     if CONFIG_FILE.exists():
         return json.loads(CONFIG_FILE.read_text())
     return None
 
+import sys
 
-def save_config(data: dict) -> None:
-    CONFIG_FILE.write_text(json.dumps(data, indent=2))
-    log.info(f"Config saved to {CONFIG_FILE}")
-
-
-# ---------------------------------------------------------------------------
-# Registration
-# ---------------------------------------------------------------------------
-
-def register_node(host_token: str, name: str | None = None, skip_confirm: bool = False):
+def register_node():
+    import getpass
     print("\n--- Node Registration ---")
-    if not name:
-        name = input("Node name (e.g. gaming-rig-1): ").strip()
-    cpu  = psutil.cpu_count(logical=True)
-    ram  = round(psutil.virtual_memory().total / (1024 ** 3), 1)
-    disk = round(psutil.disk_usage("/").total / (1024 ** 3), 1)
-    print(f"Detected: {cpu} CPU cores, {ram}GB RAM, {disk}GB storage")
-
-    if not skip_confirm:
-        if input("Register with these specs? (y/n): ").strip().lower() != "y":
-            print("Registration cancelled.")
-            return
-
+    print("Please login with your EdgeCloud Host account.")
+    email = input("Email: ").strip()
+    password = getpass.getpass("Password: ")
+    
+    # Login to get host token
+    login_resp = requests.post(
+        f"{BACKEND_URL}/auth/login",
+        json={"email": email, "password": password},
+        timeout=10
+    )
+    if login_resp.status_code != 200:
+        print("Login failed. Check email/password.")
+        return
+        
+    host_token = login_resp.json()["access_token"]
+    
+    name = input("Node name (e.g. demo-node-1): ").strip() or "demo-node-1"
+    
+    # Fake/approximate specs using standard libraries to avoid extra pip installs
+    cpu = os.cpu_count() or 4
+    ram = 16.0
+    disk = 100.0
+    
     resp = requests.post(
         f"{BACKEND_URL}/nodes/register",
         json={"name": name, "cpu_total": cpu, "ram_total": ram, "storage_total_gb": disk},
@@ -81,285 +49,168 @@ def register_node(host_token: str, name: str | None = None, skip_confirm: bool =
         timeout=10,
     )
     if resp.status_code != 200:
-        print(f"Registration failed: {resp.text}")
+        print(f"Registration failed (HTTP {resp.status_code}): {resp.text}")
         return
 
     data = resp.json()
-    save_config({"node_id": data["id"], "node_secret": data["node_secret"], "name": name})
-    print(f"\nRegistered! Node ID: {data['id']}")
-    return data
+    config = {"node_id": data["id"], "node_secret": data["node_secret"], "name": name}
+    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    print(f"\nRegistered! Node ID: {data['id']}. Config saved to .edgecloud_node.")
+    print("You can now run 'python agent.py' without --register.")
 
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-
-def get_metrics() -> dict:
-    cpu  = psutil.cpu_percent(interval=None)
-    mem  = psutil.virtual_memory()
-    disk = psutil.disk_usage("/")
-    return {
-        "cpu_usage_percent":     round(cpu, 1),
-        "ram_used_gb":           round(mem.used  / (1024 ** 3), 2),
-        "ram_total_gb":          round(mem.total / (1024 ** 3), 2),
-        "ram_usage_percent":     round(mem.percent, 1),
-        "storage_used_gb":       round(disk.used  / (1024 ** 3), 2),
-        "storage_total_gb":      round(disk.total / (1024 ** 3), 2),
-        "storage_usage_percent": round(disk.percent, 1),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Heartbeat
-# ---------------------------------------------------------------------------
-
-def send_heartbeat(node_id: str, node_secret: str) -> None:
-    metrics = get_metrics()
-    payload = {**metrics, "node_id": node_id}
-    try:
-        resp = requests.post(
-            f"{BACKEND_URL}/nodes/heartbeat",
-            json=payload,
-            headers={"Authorization": f"Bearer {node_secret}"},
-            timeout=10,
-        )
-        badge = "OK" if resp.status_code == 200 else f"WARN {resp.status_code}"
-        log.info(
-            f"Heartbeat {badge} | CPU {metrics['cpu_usage_percent']}% "
-            f"| RAM {metrics['ram_usage_percent']}% "
-            f"| Disk {metrics['storage_usage_percent']}%"
-        )
-    except Exception as e:
-        log.warning(f"Heartbeat FAILED: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Rejection reporter  (called by docker_runner via callback)
-# ---------------------------------------------------------------------------
-
-def make_reject_reporter(node_secret: str):
-    """Return a closure that POSTs a resource-rejection report to the backend."""
-    def report_rejection(deployment_id: str, reason: str,
-                         available_cpu: float, available_ram_gb: float) -> None:
-        try:
-            resp = requests.post(
-                f"{BACKEND_URL}/agent/report-rejection",
-                json={
-                    "deployment_id":   deployment_id,
-                    "reason":          reason,
-                    "available_cpu":   available_cpu,
-                    "available_ram_gb": available_ram_gb,
-                },
-                headers={"Authorization": f"Bearer {node_secret}"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                log.info(f"[{deployment_id}] Rejection reported to backend.")
-            else:
-                log.warning(f"[{deployment_id}] Backend rejected report with {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            log.warning(f"[{deployment_id}] Failed to report rejection: {e}")
-    return report_rejection
-
-
-# ---------------------------------------------------------------------------
-# Started reporter (called by docker_runner via callback)
-# ---------------------------------------------------------------------------
-
-def make_started_reporter(node_secret: str):
-    """Return a closure that POSTs a start-confirmation to the backend."""
-    def report_started(deployment_id: str) -> None:
-        try:
-            resp = requests.post(
-                f"{BACKEND_URL}/agent/report-started",
-                json={"deployment_id": deployment_id},
-                headers={"Authorization": f"Bearer {node_secret}"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                log.info(f"[{deployment_id}] Start confirmed to backend.")
-            else:
-                log.warning(f"[{deployment_id}] Backend rejected start report with {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            log.warning(f"[{deployment_id}] Failed to report start: {e}")
-    return report_started
-
-
-# ---------------------------------------------------------------------------
-# Deployment poll + reconcile
-# ---------------------------------------------------------------------------
-
-def poll_deployments(node_secret: str) -> None:
-    """Fetch desired deployment states from the backend and reconcile Docker."""
-    try:
-        resp = requests.get(
-            f"{BACKEND_URL}/agent/deployments",
-            headers={"Authorization": f"Bearer {node_secret}"},
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            deployments = resp.json()
-            log.info(f"Polling: {len(deployments)} deployment(s) assigned to this node.")
-            on_reject = make_reject_reporter(node_secret)
-            on_started = make_started_reporter(node_secret)
-            docker_runner.reconcile(deployments, on_reject=on_reject, on_started=on_started)
-        else:
-            log.warning(f"Deployment poll returned {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log.warning(f"Deployment poll failed: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Log push
-# ---------------------------------------------------------------------------
-
-def push_container_logs(node_secret: str, deployments: list) -> None:
-    """
-    For each running deployment, fetch the last 100 log lines from Docker
-    and POST them to the backend log store.
-    Only pushes logs for deployments that have a local container tracked.
-    """
-    running = [d for d in deployments if d.get("status") == "running"]
-    for dep in running:
-        dep_id = dep["deployment_id"]
-        lines  = docker_runner.fetch_logs(dep_id, tail=100)
-        if not lines:
-            continue
-        try:
-            resp = requests.post(
-                f"{BACKEND_URL}/agent/push-logs",
-                json={"deployment_id": dep_id, "lines": lines},
-                headers={"Authorization": f"Bearer {node_secret}"},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                log.warning(f"[{dep_id}] Log push returned {resp.status_code}: {resp.text[:100]}")
-        except Exception as e:
-            log.warning(f"[{dep_id}] Log push failed: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Metrics push
-# ---------------------------------------------------------------------------
-
-def push_container_metrics(node_secret: str, deployments: list) -> None:
-    """
-    Collect CPU %, memory, and uptime from every locally-running container
-    and batch-POST them to the backend metrics store.
-    """
-    running = [d for d in deployments if d.get("status") == "running"]
-    batch: list = []
-    for dep in running:
-        dep_id = dep["deployment_id"]
-        stats  = docker_runner.fetch_container_stats(dep_id)
-        if stats is None:
-            continue
-        batch.append({
-            "deployment_id":   dep_id,
-            "cpu_percent":     stats["cpu_percent"],
-            "memory_mb":       stats["memory_mb"],
-            "memory_limit_mb": stats["memory_limit_mb"],
-            "uptime_seconds":  stats["uptime_seconds"],
-        })
-
-    if not batch:
+def main():
+    if "--register" in sys.argv:
+        register_node()
         return
-
-    try:
-        resp = requests.post(
-            f"{BACKEND_URL}/agent/push-metrics",
-            json={"metrics": batch},
-            headers={"Authorization": f"Bearer {node_secret}"},
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            log.warning(f"Metrics push returned {resp.status_code}: {resp.text[:100]}")
-        else:
-            log.debug(f"Metrics pushed for {len(batch)} container(s).")
-    except Exception as e:
-        log.warning(f"Metrics push failed: {e}")
-
-
-
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
-
-def run_agent(node_id: str, node_secret: str) -> None:
-    docker_runner.sync_container_map()
-    log.info(f"Agent running for node {node_id}. Ctrl+C to stop.")
-    log.info(
-        f"Heartbeat every {HEARTBEAT_INTERVAL}s "
-        f"| Poll every {POLL_INTERVAL}s "
-        f"| Metrics every {METRICS_INTERVAL}s "
-        f"| Logs every {LOG_INTERVAL}s"
-    )
-
-    last_heartbeat   = 0.0
-    last_poll        = 0.0
-    last_log_push    = 0.0
-    last_metrics     = 0.0
-    _last_deployments: list = []  # cache last poll result for auxiliary loops
-
-    while True:
-        now = time.monotonic()
-
-        if now - last_heartbeat >= HEARTBEAT_INTERVAL:
-            send_heartbeat(node_id, node_secret)
-            last_heartbeat = now
-
-        if now - last_poll >= POLL_INTERVAL:
-            try:
-                resp = requests.get(
-                    f"{BACKEND_URL}/agent/deployments",
-                    headers={"Authorization": f"Bearer {node_secret}"},
-                    timeout=15,
-                )
-                if resp.status_code == 200:
-                    _last_deployments = resp.json()
-                    log.info(f"Polling: {len(_last_deployments)} deployment(s) assigned.")
-                    on_reject = make_reject_reporter(node_secret)
-                    on_started = make_started_reporter(node_secret)
-                    docker_runner.reconcile(_last_deployments, on_reject=on_reject, on_started=on_started)
-                else:
-                    log.warning(f"Deployment poll returned {resp.status_code}: {resp.text[:200]}")
-            except Exception as e:
-                log.warning(f"Deployment poll failed: {e}")
-            last_poll = now
-
-        if now - last_log_push >= LOG_INTERVAL and _last_deployments:
-            push_container_logs(node_secret, _last_deployments)
-            last_log_push = now
-
-        if now - last_metrics >= METRICS_INTERVAL and _last_deployments:
-            push_container_metrics(node_secret, _last_deployments)
-            last_metrics = now
-
-        time.sleep(5)
-
-
-# ---------------------------------------------------------------------------
-# CLI entry-point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="EdgeCloud Node Agent")
-    parser.add_argument("--register",   action="store_true", help="Register this node with the backend")
-    parser.add_argument("--host-token", type=str,            help="Host JWT token (required for --register)")
-    parser.add_argument("--name",       type=str,            help="Node display name")
-    parser.add_argument("--yes",        action="store_true", help="Skip confirmation prompt")
-    args = parser.parse_args()
-
-    if args.register:
-        if not args.host_token:
-            print("ERROR: --host-token required for registration")
-            sys.exit(1)
-        register_node(args.host_token, name=args.name, skip_confirm=args.yes)
-        sys.exit(0)
 
     config = load_config()
     if not config:
-        print("No node config found. Run: py agent.py --register --host-token YOUR_TOKEN")
-        sys.exit(1)
+        print("Please run the full agent once with --register to generate .edgecloud_node config.")
+        return
 
-    run_agent(config["node_id"], config["node_secret"])
+    node_secret = config["node_secret"]
+    print(f"Starting simple demo agent. Connecting to {BACKEND_URL}...")
+    
+    try:
+        client = docker.from_env()
+    except Exception as e:
+        print("Failed to connect to Docker. Is Docker running?")
+        return
+
+    # Tracking mapping: deployment_id -> container_id
+    # We will map by container name 'edgecloud_<id>'
+    
+    while True:
+        try:
+            resp = requests.get(
+                f"{BACKEND_URL}/agent/deployments",
+                headers={"Authorization": f"Bearer {node_secret}"},
+                timeout=5
+            )
+            if resp.status_code != 200:
+                print(f"Failed to fetch deployments: {resp.text}")
+                time.sleep(5)
+                continue
+                
+            deployments = resp.json()
+            
+            # Get existing containers
+            existing_containers = {}
+            for c in client.containers.list(all=True, filters={"name": "edgecloud_"}):
+                dep_id = c.name.replace("edgecloud_", "")
+                existing_containers[dep_id] = c
+
+            for dep in deployments:
+                dep_id = dep["deployment_id"]
+                status = dep["status"]
+                image = dep["docker_image"]
+                cpu_limit = dep["cpu_limit"]
+                ram_limit = dep["ram_limit"]
+
+                container = existing_containers.get(dep_id)
+                container_running = container and container.status == "running"
+
+                if status == "running" and not container_running:
+                    # Cleanup old stopped container if it exists
+                    if container:
+                        container.remove(force=True)
+                    
+                    print(f"[PULLING] {image}...")
+                    try:
+                        client.images.pull(image)
+                    except Exception as e:
+                        print(f"Failed to pull {image}: {e}")
+                        
+                    # Run container
+                    try:
+                        # Convert limits
+                        cpu_quota = int(cpu_limit * 100000) if cpu_limit else 100000
+                        mem_limit_bytes = int(ram_limit * 1024 * 1024 * 1024) if ram_limit else 512*1024*1024
+                        container_port = dep.get("container_port", 80)
+                        env_vars = dep.get("env_vars")
+                        env_dict = {}
+                        if env_vars:
+                            try:
+                                import json
+                                env_dict = json.loads(env_vars)
+                            except:
+                                pass
+
+                        client.containers.run(
+                            image,
+                            name=f"edgecloud_{dep_id}",
+                            detach=True,
+                            cpu_period=100000,
+                            cpu_quota=cpu_quota,
+                            mem_limit=mem_limit_bytes,
+                            ports={f"{container_port}/tcp": container_port},
+                            environment=env_dict
+                        )
+                        print(f"[STARTED] deployment {dep_id} - Accessible at http://localhost:{container_port}")
+                        
+                        # Send log to backend (Optional Logs simple requirement)
+                        requests.post(
+                            f"{BACKEND_URL}/agent/push-logs",
+                            headers={"Authorization": f"Bearer {node_secret}"},
+                            json={"deployment_id": dep_id, "lines": ["Container started"]}
+                        )
+                    except Exception as e:
+                        print(f"Failed to start container: {e}")
+
+                elif status != "running" and container:
+                    try:
+                        container.stop(timeout=2)
+                        container.remove(force=True)
+                        print(f"[STOPPED] deployment {dep_id}")
+                        
+                        # Send log to backend
+                        requests.post(
+                            f"{BACKEND_URL}/agent/push-logs",
+                            headers={"Authorization": f"Bearer {node_secret}"},
+                            json={"deployment_id": dep_id, "lines": ["Container stopped"]}
+                        )
+                    except Exception as e:
+                        print(f"Failed to stop container: {e}")
+
+                # If running, gather and send metrics
+                if status == "running" and container_running:
+                    try:
+                        stats = container.stats(stream=False)
+                        
+                        # CPU
+                        cpu_delta = stats['cpu_stats']['cpu_usage']['total_usage'] - stats.get('precpu_stats', {}).get('cpu_usage', {}).get('total_usage', 0)
+                        system_cpu_delta = stats['cpu_stats'].get('system_cpu_usage', 0) - stats.get('precpu_stats', {}).get('system_cpu_usage', 0)
+                        number_cpus = stats['cpu_stats'].get('online_cpus', 1)
+                        cpu_percent = 0.0
+                        if system_cpu_delta > 0.0 and cpu_delta > 0.0:
+                            cpu_percent = (cpu_delta / system_cpu_delta) * number_cpus * 100.0
+
+                        # Memory
+                        mem_usage = stats['memory_stats'].get('usage', 0)
+                        mem_limit_val = stats['memory_stats'].get('limit', 1)
+                        mem_mb = mem_usage / (1024 * 1024)
+                        mem_limit_mb = mem_limit_val / (1024 * 1024)
+                        
+                        print(f"[{dep_id}] CPU: {cpu_percent:.1f}% | RAM: {mem_mb:.1f}MB / {mem_limit_mb:.1f}MB")
+                        
+                        requests.post(
+                            f"{BACKEND_URL}/agent/push-metrics",
+                            headers={"Authorization": f"Bearer {node_secret}"},
+                            json={"metrics": [{
+                                "deployment_id": dep_id,
+                                "cpu_percent": cpu_percent,
+                                "memory_mb": mem_mb,
+                                "memory_limit_mb": mem_limit_mb,
+                                "uptime_seconds": 0
+                            }]}
+                        )
+                    except Exception as e:
+                        pass # Ignore intermittent stats errors
+
+        except Exception as e:
+            print(f"Agent loop error: {e}")
+            
+        time.sleep(5)
+
+if __name__ == "__main__":
+    main()

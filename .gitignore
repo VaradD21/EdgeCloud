@@ -1,7 +1,10 @@
-# Environments
+# Environments and Secrets
 .env
 .env.*
 !.env.example
+*.local
+alice_token.txt
+.edgecloud_node
 
 # Python
 __pycache__/
@@ -13,14 +16,21 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+*.egg-info/
 
 # Node / Frontend
 node_modules/
 dist/
 dist-ssr/
-*.local
 .eslintcache
 .stylelintcache
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+backend/edgecloud.db
 
 # Logs
 *.log
@@ -42,14 +52,6 @@ Thumbs.db
 .docker
 
 # Project Specific
-*.db
-*.sqlite
-*.sqlite3
-.edgecloud_node
-alice_token.txt
 .agents/
-backend/edgecloud.db
-EDGECLOUD_BLUEPRINT.md
-run_agent.bat
-run_backend.bat
-run_frontend.bat
+.planning/
+temp/

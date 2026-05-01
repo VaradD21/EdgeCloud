@@ -5,8 +5,8 @@ import os
 import secrets
 
 env_secret = os.getenv("JWT_SECRET")
-# Generate a secure random default if not provided (invalidates on restart, but secure)
-SECRET_KEY = env_secret if env_secret else secrets.token_urlsafe(32)
+# DEMO: Use a fixed secret so logins survive uvicorn reloads
+SECRET_KEY = env_secret if env_secret else "edgecloud-demo-secret-key-123"
 
 if os.getenv("ENV") == "prod" and not env_secret:
     raise RuntimeError("JWT_SECRET must be set in production")

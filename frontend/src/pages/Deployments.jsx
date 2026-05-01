@@ -11,12 +11,28 @@ export default function Deployments() {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  useEffect(() => {
+  const fetchDeployments = () => {
     api.get('/deployments')
       .then(r => setDeployments(r.data))
       .catch(() => setError('Failed to load deployments'))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchDeployments();
+    const interval = setInterval(fetchDeployments, 5000);
+    return () => clearInterval(interval);
   }, []);
+
+  const handleAction = async (e, id, action) => {
+    e.stopPropagation();
+    try {
+      await api.post(`/deployments/${id}/${action}`);
+      fetchDeployments();
+    } catch (err) {
+      setError(`Failed to ${action} deployment`);
+    }
+  };
 
   if (loading) {
     return (
@@ -75,19 +91,24 @@ export default function Deployments() {
               </div>
 
               {/* Status */}
-              <div className="flex-shrink-0">
-                <StatusBadge status={dep.status} />
+              <div className="flex-shrink-0 flex flex-col items-center gap-1">
+                <span className="text-xs font-semibold flex items-center gap-1">
+                  {dep.status === 'running' ? '🟢 Running' : '🔴 Stopped'}
+                </span>
               </div>
 
-              {/* Cost */}
-              <div className="flex-shrink-0 hidden sm:flex items-center gap-2 text-slate-300">
-                <DollarSign className="w-4 h-4 text-slate-500" />
-                <span className="text-sm font-semibold">{(dep.total_cost ?? 0).toFixed(4)} Cr</span>
+              {/* Fake metrics from backend */}
+              <div className="flex-shrink-0 hidden md:block w-24 space-y-1">
+                 <div className="flex justify-between text-[10px] text-slate-400"><span>CPU</span><span>{dep.cpu_usage || 0}%</span></div>
+                 <div className="h-1 bg-white/10 rounded-full overflow-hidden"><div className="h-full bg-blue-500 transition-all" style={{ width: `${dep.cpu_usage || 0}%` }}></div></div>
+                 <div className="flex justify-between text-[10px] text-slate-400"><span>RAM</span><span>{dep.ram_usage || 0}%</span></div>
+                 <div className="h-1 bg-white/10 rounded-full overflow-hidden"><div className="h-full bg-orange-500 transition-all" style={{ width: `${dep.ram_usage || 0}%` }}></div></div>
               </div>
 
-              {/* Subdomain */}
-              <div className="flex-shrink-0 hidden lg:block">
-                <p className="text-xs text-slate-500 font-mono truncate max-w-[180px]">{dep.subdomain}</p>
+              {/* Actions */}
+              <div className="flex-shrink-0 flex items-center gap-2">
+                <button onClick={(e) => handleAction(e, dep.id, 'start')} className="px-3 py-1 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 text-xs font-bold">START</button>
+                <button onClick={(e) => handleAction(e, dep.id, 'stop')} className="px-3 py-1 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 text-xs font-bold">STOP</button>
               </div>
 
               <ChevronRight className="w-5 h-5 text-slate-600 group-hover:text-slate-400 flex-shrink-0 transition-colors" />
