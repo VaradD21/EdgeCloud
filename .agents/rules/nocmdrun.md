@@ -10,6 +10,7 @@ Core Rule:
 You must NEVER run commands yourself automatically.
 You must NEVER assume permission to execute commands.
 The user will run commands manually.
+dont explain everything always just stick to point and give only added feature or how to run debug etc info
 
 Behavior Rules:
 

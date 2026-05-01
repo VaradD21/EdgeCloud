@@ -1,89 +1,202 @@
-import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { useAuthStore } from '../store/authStore'
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../lib/api';
+import { Server, Box, Globe, Play, ArrowLeft } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 export default function Deploy() {
-  const { listingId } = useParams()
-  const navigate = useNavigate()
-  const { token } = useAuthStore()
+  const { listingId } = useParams();
+  const navigate = useNavigate();
+  const [listing, setListing] = useState(null);
   
-  const [name, setName] = useState('')
-  const [dockerImage, setDockerImage] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [name, setName] = useState('');
+  const [image, setImage] = useState('nginx:latest');
+  const [port, setPort] = useState(80);
+  
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const fetchListing = async () => {
+      try {
+        const res = await api.get('/listings');
+        const found = res.data.find(l => l.id === listingId);
+        if (found) setListing(found);
+        else setError("Listing not found or no longer available.");
+      } catch (err) {
+        setError("Failed to fetch listing details.");
+      }
+    };
+    fetchListing();
+  }, [listingId]);
 
   const handleDeploy = async (e) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-
+    e.preventDefault();
+    setLoading(true);
+    setError('');
     try {
-      const res = await fetch('http://localhost:8000/deployments', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          listing_id: listingId,
-          name,
-          docker_image: dockerImage
-        })
-      })
-
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.detail || 'Failed to create deployment')
-      }
-
-      navigate('/') // Go back to dashboard to see the deployment
+      await api.post('/deployments', {
+        listing_id: listingId,
+        name,
+        docker_image: image,
+        container_port: parseInt(port)
+      });
+      navigate('/deployments');
     } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+      setError(err.response?.data?.detail || "Deployment failed.");
+      setLoading(false);
     }
+  };
+
+  if (error && !listing) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center space-y-4">
+        <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400">
+          {error}
+        </div>
+        <button onClick={() => navigate('/marketplace')} className="btn-secondary flex items-center space-x-2">
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Marketplace</span>
+        </button>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
-      <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full border-t-4 border-blue-500">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">Deploy Application</h1>
-        
-        {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>}
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex items-center space-x-4 mb-8">
+        <button onClick={() => navigate('/marketplace')} className="p-2 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-colors">
+          <ArrowLeft className="w-5 h-5 text-slate-300" />
+        </button>
+        <div>
+          <h1 className="text-3xl font-bold text-white">Deploy Workload</h1>
+          <p className="text-slate-400">Configure your container for this node.</p>
+        </div>
+      </div>
 
-        <form onSubmit={handleDeploy} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">App Name</label>
-            <input 
-              type="text" 
-              required
-              className="w-full px-3 py-2 border rounded focus:outline-none focus:ring focus:border-blue-300"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="e.g. my-web-app"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Docker Image</label>
-            <input 
-              type="text" 
-              required
-              className="w-full px-3 py-2 border rounded focus:outline-none focus:ring focus:border-blue-300"
-              value={dockerImage}
-              onChange={e => setDockerImage(e.target.value)}
-              placeholder="e.g. nginx:latest"
-            />
-          </div>
-          
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition disabled:opacity-50"
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Configuration Form */}
+        <div className="lg:col-span-2">
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="glass-panel p-8 rounded-3xl"
           >
-            {loading ? 'Deploying...' : 'Deploy Now'}
-          </button>
-        </form>
+            {error && (
+              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm font-medium">
+                {error}
+              </div>
+            )}
+            
+            <form onSubmit={handleDeploy} className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Deployment Name</label>
+                <div className="relative">
+                  <Box className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full glass-input pl-12"
+                    placeholder="my-web-app"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Docker Image</label>
+                <div className="relative">
+                  <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                  <input
+                    type="text"
+                    value={image}
+                    onChange={(e) => setImage(e.target.value)}
+                    className="w-full glass-input pl-12 font-mono text-sm"
+                    placeholder="nginx:latest or username/repo:tag"
+                    required
+                  />
+                </div>
+                <p className="text-xs text-slate-500 mt-2">Must be publicly accessible on Docker Hub.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Container Port</label>
+                <div className="relative">
+                  <Server className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                  <input
+                    type="number"
+                    value={port}
+                    onChange={(e) => setPort(e.target.value)}
+                    className="w-full glass-input pl-12 font-mono"
+                    placeholder="80"
+                    required
+                  />
+                </div>
+                <p className="text-xs text-slate-500 mt-2">The port your application listens on internally.</p>
+              </div>
+
+              <div className="pt-4">
+                <button
+                  type="submit"
+                  disabled={loading || !listing}
+                  className="w-full btn-primary flex justify-center items-center space-x-2 py-4"
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  <span className="font-bold text-lg">{loading ? 'Deploying...' : 'Launch Container'}</span>
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+
+        {/* Node Summary */}
+        <div className="lg:col-span-1">
+          <motion.div 
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="glass-panel p-6 rounded-3xl sticky top-8"
+          >
+            <h3 className="text-lg font-bold text-white mb-6 flex items-center space-x-2">
+              <Server className="w-5 h-5 text-edge-blue" />
+              <span>Target Node</span>
+            </h3>
+
+            {!listing ? (
+              <div className="animate-pulse space-y-4">
+                <div className="h-12 bg-white/5 rounded-lg"></div>
+                <div className="h-12 bg-white/5 rounded-lg"></div>
+                <div className="h-12 bg-white/5 rounded-lg"></div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-black/20 p-4 rounded-xl border border-white/5 flex justify-between items-center">
+                  <span className="text-slate-400 text-sm">vCPU Cores</span>
+                  <span className="text-white font-bold">{listing.cpu_offered}</span>
+                </div>
+                <div className="bg-black/20 p-4 rounded-xl border border-white/5 flex justify-between items-center">
+                  <span className="text-slate-400 text-sm">Memory (RAM)</span>
+                  <span className="text-white font-bold">{listing.ram_offered_gb} GB</span>
+                </div>
+                <div className="bg-black/20 p-4 rounded-xl border border-white/5 flex justify-between items-center">
+                  <span className="text-slate-400 text-sm">Storage</span>
+                  <span className="text-white font-bold">{listing.storage_offered_gb} GB</span>
+                </div>
+                
+                <div className="mt-6 pt-6 border-t border-white/10">
+                  <div className="flex justify-between items-end">
+                    <span className="text-slate-400 font-medium">Hourly Rate</span>
+                    <div className="text-right">
+                      <span className="text-2xl font-bold text-edge-glow">{listing.price_per_hour.toFixed(3)}</span>
+                      <span className="text-xs text-slate-500 uppercase ml-1">Cr</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </div>
       </div>
     </div>
-  )
+  );
 }

@@ -1,3 +1,39 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-edge-900 text-slate-200 antialiased selection:bg-edge-purple selection:text-white;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-glass-gradient backdrop-blur-md border border-white/10 shadow-xl;
+  }
+  
+  .glass-input {
+    @apply bg-white/5 border border-white/10 rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-edge-blue focus:border-transparent transition-all placeholder:text-slate-500 text-white;
+  }
+
+  .btn-primary {
+    @apply relative overflow-hidden bg-gradient-to-r from-edge-blue to-edge-purple text-white font-medium rounded-lg px-6 py-3 shadow-[0_0_15px_rgba(59,130,246,0.3)] hover:shadow-[0_0_25px_rgba(139,92,246,0.5)] transition-all active:scale-95;
+  }
+  
+  .btn-secondary {
+    @apply bg-white/5 border border-white/10 text-white font-medium rounded-lg px-6 py-3 hover:bg-white/10 transition-all active:scale-95;
+  }
+
+  /* Dark glassmorphism select */
+  select.glass-input option {
+    @apply bg-slate-900 text-white;
+  }
+}
+
+@layer utilities {
+  /* Thin custom scrollbar */
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { @apply bg-white/10 rounded-full; }
+}

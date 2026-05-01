@@ -1,89 +1,84 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+import logging
+from datetime import datetime
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s", datefmt="%H:%M:%S")
+logger = logging.getLogger("edgecloud")
+
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import engine, Base, get_db
 import models
 import schemas
 import auth
+import deps
+import routers.agent
 from deps import get_current_user
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+app = FastAPI(
+    title="EdgeCloud API",
+    description="Decentralized compute marketplace. Hosts rent idle PCs. Buyers deploy anything in Docker.",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-app = FastAPI(title="Edgecloud API")
+@app.exception_handler(Exception)
+async def global_error_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    msgs = [f"{e['loc'][-1]}: {e['msg']}" for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": msgs})
+
+import os
+
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000").split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-import asyncio
-from datetime import timedelta
-from database import SessionLocal
+@app.get("/")
+def root():
+    return {
+        "message": "Welcome to EdgeCloud API",
+        "docs": "/docs",
+        "health": "/health",
+        "version": "1.0.0"
+    }
 
-async def node_monitor_task():
-    while True:
-        try:
-            db = SessionLocal()
-            now = datetime.utcnow()
-            cutoff = now - timedelta(seconds=90)
-            
-            # 1. Failover check
-            offline_nodes = db.query(models.Node).filter(
-                models.Node.status == "online",
-                models.Node.last_heartbeat < cutoff
-            ).all()
-            
-            for node in offline_nodes:
-                node.status = "offline"
-                if node.host:
-                    node.host.rating_score = max(0.0, node.host.rating_score - 1.0)
-                
-                # Failover running deployments
-                deployments = db.query(models.Deployment).filter(
-                    models.Deployment.node_id == node.id,
-                    models.Deployment.status == "running"
-                ).all()
-                
-                for dep in deployments:
-                    listing = db.query(models.Listing).filter(models.Listing.id == dep.listing_id).first()
-                    if listing:
-                        alt_node = db.query(models.Node).filter(
-                            models.Node.status == "online",
-                            models.Node.cpu_total - models.Node.cpu_reserved >= listing.cpu,
-                            models.Node.ram_total - models.Node.ram_reserved >= listing.ram
-                        ).first()
-                        
-                        if alt_node:
-                            node.cpu_reserved = max(0.0, node.cpu_reserved - listing.cpu)
-                            node.ram_reserved = max(0.0, node.ram_reserved - listing.ram)
-                            alt_node.cpu_reserved += listing.cpu
-                            alt_node.ram_reserved += listing.ram
-                            dep.node_id = alt_node.id
-                            
-            # 2. Uptime rating update
-            online_nodes = db.query(models.Node).filter(models.Node.status == "online").all()
-            for node in online_nodes:
-                if node.host:
-                    node.host.rating_score += 0.1
-                    node.host.total_uptime += 1
-                    
-            db.commit()
-            db.close()
-        except Exception as e:
-            print(f"Monitor error: {e}")
-        await asyncio.sleep(60)
+@app.get("/health", tags=["system"])
+def health():
+    return {"status": "ok", "version": "1.0.0", "timestamp": datetime.utcnow().isoformat()}
+
+import routers.credits
+import routers.ws
+import routers.admin
+import routers.agent
+import routers.user
+app.include_router(routers.credits.router, prefix="/credits", tags=["credits"])
+app.include_router(routers.ws.router, prefix="/ws", tags=["ws"])
+app.include_router(routers.admin.router, prefix="/admin", tags=["admin"])
+app.include_router(routers.agent.router, prefix="/agent", tags=["agent"])
+app.include_router(routers.user.router, prefix="/user", tags=["user"])
+
+import asyncio
+from deployment_status import DeploymentStatus, STARTABLE_FROM, STOPPABLE_FROM
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(node_monitor_task())
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+    logger.info("EdgeCloud API starting up")
+    logger.info(f"Docs available at http://localhost:8000/docs")
+    import tasks
+    tasks.start_all_tasks()
 
 @app.post("/auth/register", response_model=schemas.UserOut)
 def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -124,10 +119,7 @@ def get_me(current_user: models.User = Depends(get_current_user)):
 from datetime import datetime
 
 @app.post("/hosts/register", response_model=schemas.HostOut)
-def register_host(host_in: schemas.HostCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != "host":
-        raise HTTPException(status_code=403, detail="Only hosts can register a host profile")
-        
+def register_host(host_in: schemas.HostCreate, current_user: models.User = Depends(deps.get_current_host), db: Session = Depends(get_db)):
     existing_host = db.query(models.Host).filter(models.Host.user_id == current_user.id).first()
     if existing_host:
         raise HTTPException(status_code=400, detail="User already has a host profile")
@@ -156,8 +148,11 @@ def register_node(node_in: schemas.NodeCreate, current_user: models.User = Depen
         
     new_node = models.Node(
         host_id=host.id,
+        name=node_in.name,
         cpu_total=node_in.cpu_total,
-        ram_total=node_in.ram_total
+        ram_total=node_in.ram_total,
+        storage_total_gb=node_in.storage_total_gb,
+        node_secret=auth.create_access_token(data={"sub": str(current_user.id), "role": "node"})
     )
     db.add(new_node)
     db.commit()
@@ -165,19 +160,15 @@ def register_node(node_in: schemas.NodeCreate, current_user: models.User = Depen
     return new_node
 
 @app.post("/nodes/heartbeat")
-def node_heartbeat(heartbeat: schemas.NodeHeartbeat, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    host = db.query(models.Host).filter(models.Host.user_id == current_user.id).first()
-    if not host:
-        raise HTTPException(status_code=404, detail="Host profile not found")
+def node_heartbeat(heartbeat: schemas.NodeHeartbeat, current_node: models.Node = Depends(routers.agent.get_node_from_secret), db: Session = Depends(get_db)):
+    if heartbeat.node_id != current_node.id:
+        raise HTTPException(status_code=403, detail="Token does not match node ID")
         
-    node = db.query(models.Node).filter(models.Node.id == heartbeat.node_id, models.Node.host_id == host.id).first()
-    if not node:
-        raise HTTPException(status_code=404, detail="Node not found or not owned by host")
-        
-    node.cpu_reserved = heartbeat.cpu_usage
-    node.ram_reserved = heartbeat.ram_usage
-    node.last_heartbeat = datetime.utcnow()
-    node.status = "online"
+    current_node.cpu_usage_percent = heartbeat.cpu_usage_percent
+    current_node.ram_usage_percent = heartbeat.ram_usage_percent
+    current_node.storage_usage_percent = heartbeat.storage_usage_percent
+    current_node.last_heartbeat = datetime.utcnow()
+    current_node.status = "online"
     
     db.commit()
     return {"status": "ok"}
@@ -197,8 +188,9 @@ def create_listing(listing_in: schemas.ListingCreate, current_user: models.User 
     new_listing = models.Listing(
         host_id=host.id,
         node_id=node.id,
-        cpu=listing_in.cpu,
-        ram=listing_in.ram,
+        cpu_offered=listing_in.cpu_offered,
+        ram_offered_gb=listing_in.ram_offered_gb,
+        storage_offered_gb=listing_in.storage_offered_gb,
         price_per_hour=listing_in.price_per_hour
     )
     db.add(new_listing)
@@ -231,7 +223,13 @@ def get_listings(min_cpu: Optional[float] = None, min_ram: Optional[float] = Non
         out.host_display_name = host.display_name
         out.host_rating = round(host.rating_score, 1)
         out.node_status = node.status
+        
+        # Calculate marketplace reliability score
+        score = (host.rating_score * 0.4) + (min(10.0, host.total_uptime_seconds / 86400) * 0.4) + ((10.0 / max(0.1, listing.price_per_hour)) * 0.2)
+        out.reliability_score = round(score, 2)
         results.append(out)
+        
+    results.sort(key=lambda x: x.reliability_score or 0.0, reverse=True)
         
     return results
 
@@ -265,11 +263,19 @@ def create_deployment(deploy_in: schemas.DeploymentCreate, current_user: models.
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
         
-    # Simulate marking resources used
-    node.cpu_reserved += listing.cpu
-    node.ram_reserved += listing.ram
+    from utils.resources import reserve_resources
+    ok = reserve_resources(db, listing.node_id, listing.cpu_offered, listing.ram_offered_gb, listing.storage_offered_gb)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Insufficient resources on this node")
     
     subdomain = f"{deploy_in.name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}.edgecloud.local"
+    
+    if current_user.credit_balance <= 0:
+        from utils.resources import release_resources
+        release_resources(db, listing.node_id, listing.cpu_offered, listing.ram_offered_gb, listing.storage_offered_gb)
+        raise HTTPException(402, "Insufficient credits. Add credits at POST /credits/add")
+        
+    from datetime import datetime
     
     new_deployment = models.Deployment(
         user_id=current_user.id,
@@ -298,6 +304,70 @@ def get_deployment(id: str, current_user: models.User = Depends(get_current_user
         raise HTTPException(status_code=404, detail="Deployment not found")
     return deployment
 
+@app.get("/deployments/{id}/logs")
+def get_deployment_logs(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Return the last 100 log lines for a deployment.
+    Logs are pushed by the node agent and stored in an in-memory ring buffer.
+    Returns an empty list if the agent has not yet pushed any logs.
+    """
+    import log_store
+    deployment = db.query(models.Deployment).filter(
+        models.Deployment.id == id,
+        models.Deployment.user_id == current_user.id
+    ).first()
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    return {"logs": log_store.get(id)}
+
+@app.post("/deployments/{id}/start")
+def start_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    deployment = db.query(models.Deployment).filter(models.Deployment.id == id, models.Deployment.user_id == current_user.id).first()
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    if deployment.status not in STARTABLE_FROM:
+        raise HTTPException(status_code=400, detail=f"Cannot start deployment from status: {deployment.status}")
+
+    listing = db.query(models.Listing).filter(models.Listing.id == deployment.listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    from utils.resources import reserve_resources
+    ok = reserve_resources(db, deployment.node_id, listing.cpu_offered, listing.ram_offered_gb, listing.storage_offered_gb)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Insufficient resources on this node")
+
+    deployment.status = DeploymentStatus.running
+    deployment.last_error = None
+    db.commit()
+    return {"status": DeploymentStatus.running}
+
+@app.post("/deployments/{id}/stop")
+def stop_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    deployment = db.query(models.Deployment).filter(models.Deployment.id == id, models.Deployment.user_id == current_user.id).first()
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    if deployment.status not in STOPPABLE_FROM:
+        raise HTTPException(status_code=400, detail=f"Cannot stop deployment from status: {deployment.status}")
+
+    listing = db.query(models.Listing).filter(models.Listing.id == deployment.listing_id).first()
+    # Release resources only if the deployment was actually active (not just paused)
+    if listing and deployment.status == DeploymentStatus.running:
+        from utils.resources import release_resources
+        release_resources(db, deployment.node_id, listing.cpu_offered, listing.ram_offered_gb, listing.storage_offered_gb)
+
+    deployment.status = DeploymentStatus.stopped
+    db.commit()
+    return {"status": DeploymentStatus.stopped}
+
+@app.post("/deployments/{id}/restart")
+def restart_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    stop_deployment(id, current_user, db)
+    start_deployment(id, current_user, db)
+    return {"status": "restarted"}
+
 @app.delete("/deployments/{id}")
 def delete_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     deployment = db.query(models.Deployment).filter(models.Deployment.id == id, models.Deployment.user_id == current_user.id).first()
@@ -309,12 +379,36 @@ def delete_deployment(id: str, current_user: models.User = Depends(get_current_u
         node = db.query(models.Node).filter(models.Node.id == deployment.node_id).first()
         
         if node and listing:
-            node.cpu_reserved = max(0.0, node.cpu_reserved - listing.cpu)
-            node.ram_reserved = max(0.0, node.ram_reserved - listing.ram)
+            from utils.resources import release_resources
+            release_resources(db, deployment.node_id, listing.cpu_offered, listing.ram_offered_gb, listing.storage_offered_gb)
             
-    deployment.status = "stopped"
+            from datetime import datetime
+            now = datetime.utcnow()
+            last_billed_at = deployment.last_billed_at or deployment.started_at
+            seconds_passed = (now - last_billed_at).total_seconds()
+            
+            if seconds_passed > 0:
+                cost = round((seconds_passed / 3600.0) * listing.price_per_hour, 6)
+                if cost > 0 and current_user.credit_balance >= cost:
+                    current_user.credit_balance -= cost
+                    tx = models.CreditTransaction(
+                        id=str(uuid.uuid4()), 
+                        user_id=current_user.id,
+                        amount=-cost, 
+                        description=f"Deployment final charge: {deployment.subdomain}",
+                        created_at=now,
+                        deployment_id=str(deployment.id),
+                        node_id=str(deployment.node_id),
+                        duration_seconds=int(seconds_passed),
+                        price_per_minute=listing.price_per_hour / 60,
+                        balance_after=current_user.credit_balance,
+                        transaction_type="runtime"
+                    )
+                    db.add(tx)
+            
+    db.delete(deployment)
     db.commit()
-    return {"status": "ok"}
+    return {"status": "deleted"}
 
 @app.get("/nodes/{id}/stats", response_model=schemas.NodeOut)
 def get_node_stats(id: str, db: Session = Depends(get_db)):
@@ -329,3 +423,24 @@ def get_host(id: str, db: Session = Depends(get_db)):
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")
     return host
+
+@app.patch("/nodes/{id}/limits", response_model=schemas.NodeOut)
+def update_node_limits(id: str, limits: schemas.NodeUpdateLimits, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    host = db.query(models.Host).filter(models.Host.user_id == current_user.id).first()
+    if not host:
+        raise HTTPException(status_code=403, detail="Only hosts can update nodes")
+        
+    node = db.query(models.Node).filter(models.Node.id == id, models.Node.host_id == host.id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found or not owned by host")
+        
+    if limits.max_cpu_percent is not None:
+        node.max_cpu_percent = limits.max_cpu_percent
+    if limits.max_ram_percent is not None:
+        node.max_ram_percent = limits.max_ram_percent
+    if limits.enabled is not None:
+        node.enabled = limits.enabled
+        
+    db.commit()
+    db.refresh(node)
+    return node

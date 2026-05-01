@@ -21,11 +21,13 @@ Edgecloud is a decentralized platform that allows users to rent out their spare 
 ## 📁 Project Structure
 
 ```text
-/backend    - FastAPI server and database logic
-/frontend   - React dashboard and marketplace UI
-/agent      - Simulated node hardware reporter
-/docker     - Configuration for Postgres and local services
+/backend    - FastAPI server, SQL database, and billing loops
+/frontend   - React dashboard, log streaming, and marketplace UI
+/agent      - Real Docker orchestration and telemetry agent
+/docker     - Infrastructure configuration for local services
 ```
+
+For an exhaustive breakdown of every function, file, and logic workflow, see the [**EdgeCloud Blueprint**](./EDGECLOUD_BLUEPRINT.md).
 
 ## 🏁 Getting Started
 
@@ -64,10 +66,12 @@ python agent.py
 ```
 
 ## 📜 Roadmap
-- [ ] Real Docker Socket integration for physical container spawning.
-- [ ] Wallet & Payment integration (Mock credits).
-- [ ] Node health history & advanced analytics dashboard.
-- [ ] Global load balancing via the assigned subdomains.
+- [x] Real Docker Socket integration for physical container spawning.
+- [x] Mock Credits & Fractional Billing system.
+- [x] Live log streaming & container telemetry.
+- [ ] Wallet & Payment gateway integration (Stripe/Crypto).
+- [ ] Advanced Node Analytics (Network throughput, Latency).
+- [ ] Global load balancing via dynamic reverse proxy.
 
 ## 📄 License
 Distributed under the MIT License.

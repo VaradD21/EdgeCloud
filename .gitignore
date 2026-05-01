@@ -40,3 +40,16 @@ Thumbs.db
 
 # Docker
 .docker
+
+# Project Specific
+*.db
+*.sqlite
+*.sqlite3
+.edgecloud_node
+alice_token.txt
+.agents/
+backend/edgecloud.db
+EDGECLOUD_BLUEPRINT.md
+run_agent.bat
+run_backend.bat
+run_frontend.bat
