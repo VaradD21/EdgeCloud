@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { CreditCard, TrendingDown, TrendingUp, Filter, RefreshCw, Calendar } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -52,9 +53,15 @@ export default function Credits() {
 
   return (
     <div className="space-y-6">
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">Credits & Billing</h1>
-        <p className="text-slate-400">Track your balance and full transaction history.</p>
+      <header className="flex justify-between items-end mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2">Credits & Billing</h1>
+          <p className="text-slate-400">Track your balance and full transaction history.</p>
+        </div>
+        <Link to="/buy-credits" className="btn-primary flex items-center gap-2 px-6">
+          <CreditCard className="w-4 h-4" />
+          Buy Credits
+        </Link>
       </header>
 
       {/* Balance + summary cards */}

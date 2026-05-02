@@ -190,7 +190,7 @@ def push_logs(
             detail="Deployment not found or does not belong to this node",
         )
 
-    log_store.push(body.deployment_id, body.lines)
+    log_store.set_logs(body.deployment_id, body.lines)
     return {"stored": len(body.lines)}
 
 

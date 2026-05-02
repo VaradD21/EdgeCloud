@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import {
   Server, Cpu, HardDrive, Database, DollarSign, Activity, Zap,
-  Star, Shield, TrendingUp, SlidersHorizontal, ChevronDown
+  Star, Shield, TrendingUp, SlidersHorizontal, ChevronDown, GitBranch
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SkeletonCard } from '../components/ui';
@@ -100,7 +100,24 @@ export default function Marketplace() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap justify-between items-end gap-4 mb-2">
+      {/* GitHub Import Banner */}
+      <div className="glass-panel rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 border-edge-blue/30 bg-gradient-to-r from-edge-blue/5 to-transparent relative overflow-hidden">
+        <div className="absolute left-0 top-0 w-1 bg-edge-blue h-full" />
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center shrink-0">
+            <GitBranch className="w-6 h-6 text-slate-300" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-white mb-1">Have code on GitHub?</h2>
+            <p className="text-sm text-slate-400">Import your repository and deploy globally in under 60 seconds.</p>
+          </div>
+        </div>
+        <Link to="/import-github" className="btn-primary whitespace-nowrap px-8 py-3 shadow-lg shadow-edge-blue/20">
+          Import Project
+        </Link>
+      </div>
+
+      <header className="flex flex-wrap justify-between items-end gap-4 mb-2 mt-4">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Compute Marketplace</h1>
           <p className="text-slate-400">

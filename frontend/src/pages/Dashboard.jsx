@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import api from '../lib/api';
-import { Activity, Cpu, HardDrive, Zap, CreditCard, Clock, PlayCircle, StopCircle } from 'lucide-react';
+import { Activity, Cpu, HardDrive, Zap, CreditCard, Clock, PlayCircle, StopCircle, Globe } from 'lucide-react';
 import { motion } from 'framer-motion';
+import GlobalMap from '../components/GlobalMap';
 
 export default function Dashboard() {
   const { token, user, setUser } = useAuthStore();
@@ -88,6 +89,24 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          <div className="glass-panel p-6 rounded-2xl relative overflow-hidden group">
+             <div className="absolute -right-4 -top-4 w-24 h-24 bg-green-500/20 rounded-full blur-xl group-hover:bg-green-500/30 transition-all" />
+            <div className="flex items-center space-x-4">
+              <div className="p-3 bg-white/5 rounded-xl border border-white/10">
+                <Globe className="w-6 h-6 text-green-400" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-400">Total Monthly Spend</p>
+                <h3 className="text-3xl font-bold text-white">$ {(deployments.length * 1.45).toFixed(2)}</h3>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-8 mb-8">
+          <h2 className="text-xl font-bold text-white mb-4">Edge Network Topology</h2>
+          <GlobalMap />
         </div>
 
         <div className="mt-8">

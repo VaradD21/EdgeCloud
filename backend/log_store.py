@@ -9,25 +9,17 @@ from typing import Dict, Deque, List
 
 MAX_LINES = 100
 
-# deployment_id → deque of log lines (most-recent last)
-_store: Dict[str, Deque[str]] = {}
+# deployment_id → list of log lines
+_store: Dict[str, List[str]] = {}
 
-
-def push(deployment_id: str, lines: List[str]) -> None:
-    """Append lines to the ring buffer for a deployment."""
-    if deployment_id not in _store:
-        _store[deployment_id] = deque(maxlen=MAX_LINES)
-    buf = _store[deployment_id]
-    for line in lines:
-        stripped = line.rstrip("\n\r")
-        if stripped:  # skip blank lines
-            buf.append(stripped)
+def set_logs(deployment_id: str, lines: List[str]) -> None:
+    """Overwrite the log buffer for a deployment (used when agent sends tail=100)."""
+    _store[deployment_id] = [line.rstrip("\n\r") for line in lines if line.rstrip("\n\r")]
 
 
 def get(deployment_id: str) -> List[str]:
-    """Return the current log buffer (oldest first). Empty list if never received."""
-    buf = _store.get(deployment_id)
-    return list(buf) if buf else []
+    """Return the current log buffer. Empty list if never received."""
+    return _store.get(deployment_id, [])
 
 
 def clear(deployment_id: str) -> None:

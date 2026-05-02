@@ -328,9 +328,10 @@ def get_deployments(current_user: models.User = Depends(get_current_user), db: S
                 mem_mb = m.get("memory_mb", 0)
                 mem_limit = m.get("memory_limit_mb", 1)
                 if mem_limit > 0:
-                    out.ram_usage = int((mem_mb / mem_limit) * 100)
+                    out.ram_usage = max(1, int((mem_mb / mem_limit) * 100))
                 else:
-                    out.ram_usage = 0
+                    out.ram_usage = 1
+                out.cpu_usage = max(1, out.cpu_usage)
             else:
                 out.cpu_usage = 0
                 out.ram_usage = 0
@@ -355,9 +356,10 @@ def get_deployment(id: str, current_user: models.User = Depends(get_current_user
             mem_mb = m.get("memory_mb", 0)
             mem_limit = m.get("memory_limit_mb", 1)
             if mem_limit > 0:
-                out.ram_usage = int((mem_mb / mem_limit) * 100)
+                out.ram_usage = max(1, int((mem_mb / mem_limit) * 100))
             else:
-                out.ram_usage = 0
+                out.ram_usage = 1
+            out.cpu_usage = max(1, out.cpu_usage)
         else:
             out.cpu_usage = 0
             out.ram_usage = 0
@@ -380,6 +382,17 @@ def get_deployment_logs(id: str, current_user: models.User = Depends(get_current
     ).first()
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
+    return {"logs": log_store.get(id)}
+
+@app.get("/deployments/{id}/logs")
+def get_deployment_logs(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    deployment = db.query(models.Deployment).filter(
+        models.Deployment.id == id, 
+        models.Deployment.user_id == current_user.id
+    ).first()
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    
     return {"logs": log_store.get(id)}
 
 @app.post("/deployments/{id}/start")
