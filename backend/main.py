@@ -384,16 +384,7 @@ def get_deployment_logs(id: str, current_user: models.User = Depends(get_current
         raise HTTPException(status_code=404, detail="Deployment not found")
     return {"logs": log_store.get(id)}
 
-@app.get("/deployments/{id}/logs")
-def get_deployment_logs(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    deployment = db.query(models.Deployment).filter(
-        models.Deployment.id == id, 
-        models.Deployment.user_id == current_user.id
-    ).first()
-    if not deployment:
-        raise HTTPException(status_code=404, detail="Deployment not found")
-    
-    return {"logs": log_store.get(id)}
+
 
 @app.post("/deployments/{id}/start")
 def start_deployment(id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -496,5 +487,69 @@ def update_node_limits(id: str, limits: schemas.NodeUpdateLimits, current_user: 
         node.enabled = limits.enabled
         
     db.commit()
-    db.refresh(node)
     return node
+
+from fastapi import File, UploadFile
+import shutil
+import os
+
+@app.post("/deployments/upload")
+def upload_deployment(file: UploadFile = File(...), current_user: models.User = Depends(get_current_user)):
+    os.makedirs("uploads", exist_ok=True)
+    file_path = f"uploads/{file.filename}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    return {"package_url": f"http://localhost:8000/{file_path}"}
+
+@app.get("/nodes/assigned-workloads")
+def get_assigned_workloads(current_node: models.Node = Depends(routers.agent.get_node_from_secret), db: Session = Depends(get_db)):
+    deployments = db.query(models.Deployment).filter(
+        models.Deployment.node_id == current_node.id,
+        models.Deployment.status == "running"
+    ).all()
+    return [{
+        "id": str(d.id),
+        "package_url": f"http://localhost:8000/uploads/{d.name}.peerpkg",
+        "cpu_cores": 1.0,
+        "ram_mb": 512,
+        "disk_mb": 1024,
+        "env_vars": {}
+    } for d in deployments]
+
+from pydantic import BaseModel
+from typing import List
+
+class PushLogsIn(BaseModel):
+    deployment_id: str
+    lines: List[str]
+
+@app.post("/nodes/push-logs")
+def push_logs(data: PushLogsIn, current_node: models.Node = Depends(routers.agent.get_node_from_secret)):
+    import log_store
+    current_logs = log_store.get(data.deployment_id)
+    current_logs.extend(data.lines)
+    if len(current_logs) > 500:
+        current_logs = current_logs[-500:]
+    log_store.set_logs(data.deployment_id, current_logs)
+    return {"status": "ok"}
+
+class PushStatsIn(BaseModel):
+    deployment_id: str
+    cpu_percent: float
+    ram_mb_used: float
+    timestamp: str
+
+stats_store_db = {}
+@app.post("/nodes/push-stats")
+def push_stats(data: PushStatsIn, current_node: models.Node = Depends(routers.agent.get_node_from_secret)):
+    if data.deployment_id not in stats_store_db:
+        stats_store_db[data.deployment_id] = []
+    stats_store_db[data.deployment_id].append(data.model_dump())
+    if len(stats_store_db[data.deployment_id]) > 120:
+        stats_store_db[data.deployment_id] = stats_store_db[data.deployment_id][-120:]
+    return {"status": "ok"}
+
+@app.get("/deployments/{id}/stats")
+def get_deployment_stats(id: str, current_user: models.User = Depends(get_current_user)):
+    return {"stats": stats_store_db.get(id, [])}
+

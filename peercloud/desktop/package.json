@@ -1,0 +1,34 @@
+{
+  "name": "peercloud-desktop",
+  "version": "1.0.0",
+  "description": "PeerCloud desktop app",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "build:react": "vite build --outDir dist-react",
+    "build": "npm run build:react && electron-builder"
+  },
+  "dependencies": {
+    "adm-zip": "0.5.x",
+    "axios": "1.x",
+    "electron": "28.x",
+    "js-yaml": "4.x",
+    "ffi-napi": "4.x",
+    "pidusage": "3.x",
+    "react": "18.x",
+    "react-dom": "18.x",
+    "react-router-dom": "6.x",
+    "recharts": "2.x",
+    "serve-handler": "6.x",
+    "systeminformation": "5.x",
+    "tailwindcss": "3.x",
+    "zustand": "4.x"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.x",
+    "concurrently": "8.x",
+    "electron-builder": "24.x",
+    "vite": "5.x",
+    "wait-on": "7.x"
+  }
+}

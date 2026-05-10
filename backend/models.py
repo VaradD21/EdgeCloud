@@ -115,4 +115,6 @@ class CreditTransaction(Base):
     ram_used = Column(Float, nullable=True)
     transaction_type = Column(String, nullable=True)
 
+    # peer_packages_inclueded = Column(String, nullable=True) 
+
     user = relationship("User", back_populates="transactions")

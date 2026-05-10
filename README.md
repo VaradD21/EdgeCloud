@@ -57,13 +57,14 @@ For an exhaustive breakdown of every function, file, and logic workflow, see the
    - Frontend: `http://localhost:5173`
    - Backend API: `http://localhost:8000/docs`
 
-### Running the Node Agent
-To simulate a physical node on your local machine:
+### Running the Host Node App
+To start the custom desktop agent on your local machine:
 ```bash
-cd agent
-pip install -r requirements.txt
-python agent.py
+cd desktop-app
+npm install
+npm run electron:dev
 ```
+(Or use `run_desktop.bat` from the root)
 
 ## 📜 Roadmap
 - [x] Real Docker Socket integration for physical container spawning.
