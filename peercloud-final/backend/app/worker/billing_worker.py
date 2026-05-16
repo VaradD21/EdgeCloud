@@ -33,10 +33,30 @@ async def _process_billing():
                 if d.buyer.credit_balance_cents >= cost_cents:
                     d.buyer.credit_balance_cents -= cost_cents
                     
+                    buyer_tx = CreditTransaction(
+                        user_id=d.buyer.id,
+                        deployment_id=d.id,
+                        amount_cents=-cost_cents,
+                        type=TransactionType.usage_charge,
+                        description=f"Usage charge for deployment {d.id}"
+                    )
+                    db.add(buyer_tx)
+                    
                     host_stmt = select(User).where(User.id == d.listing.user_id)
                     host_res = await db.execute(host_stmt)
                     host = host_res.scalar_one()
-                    host.credit_balance_cents += int(cost_cents * 0.9)
+                    
+                    host_earnings = int(cost_cents * 0.9)
+                    host.credit_balance_cents += host_earnings
+                    
+                    host_tx = CreditTransaction(
+                        user_id=host.id,
+                        deployment_id=d.id,
+                        amount_cents=host_earnings,
+                        type=TransactionType.usage_charge,
+                        description=f"Earnings from deployment {d.id}"
+                    )
+                    db.add(host_tx)
                     
                     d.last_billed_at = now
                 else:

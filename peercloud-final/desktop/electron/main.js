@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const pcrSandbox = require('./pcr/sandbox');
 
@@ -35,7 +35,8 @@ function createWindow() {
 }
 
 function createTray() {
-  tray = new Tray(path.join(__dirname, '../public/icon.png')); // Ensure icon exists
+  const icon = nativeImage.createEmpty();
+  tray = new Tray(icon);
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Show App', click: () => mainWindow.show() },
     { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } }
@@ -50,7 +51,7 @@ function createTray() {
 
 app.whenReady().then(() => {
   createWindow();
-  // createTray(); // Uncomment when icon exists
+  createTray();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -79,7 +80,7 @@ ipcMain.handle('get-system-info', async () => {
 });
 
 ipcMain.handle('start-workload', async (event, payload) => {
-  return pcrSandbox.startWorkload(payload);
+  return pcrSandbox.startWorkload(payload, mainWindow.webContents);
 });
 
 ipcMain.handle('stop-workload', async (event, jobId) => {
